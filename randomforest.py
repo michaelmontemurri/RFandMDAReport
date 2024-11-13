@@ -2,6 +2,7 @@ import numpy as np
 from sklearn import datasets
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
+from joblib import Parallel, delayed, cpu_count
 
 def bootstrap_sample(X, y):
     """
@@ -35,19 +36,24 @@ class DecisionTree:
         """
         self.grow_tree(X, y)
 
-    def grow_tree(self, X, y, depth=0):
-        min_var = 1e-7
+    def grow_tree(self, X, y, depth=0, min_var=1e-7, subset_features=False):
+   
         # Check if we are at a leaf node or max depth
-        if len(set(y)) <= 1 or depth >= self.max_depth:
+        if len(set(y)) <= 1  or np.var(y) < min_var or depth >= self.max_depth:
             self.value = np.mean(y)
             return
         
-        # randomly select features
-        num_features = int(np.sqrt(X.shape[1]))
-        random_features = np.random.choice(X.shape[1], num_features, replace=False)
+        #if subset features is true, randomly select features, otherwise use all features (typically use all features for regression)
+        if subset_features:
+            # randomly select features
+            num_features = int(np.sqrt(X.shape[1]))
+            features = np.random.choice(X.shape[1], num_features, replace=False)
+        else:
+            # use all features
+            features = np.arange(X.shape[1])
  
         # get best split criteria
-        feature, threshold = self._find_split(X, y, random_features)
+        feature, threshold = self._find_split(X, y, features)
 
         # check if split is valid
         if feature is None:
@@ -63,12 +69,10 @@ class DecisionTree:
         right_idxs = X[:, feature] >= threshold
 
         self.left = DecisionTree(self.max_depth)
-        self.left.grow_tree(X[left_idxs], y[left_idxs], depth + 1)
+        self.left.grow_tree(X[left_idxs], y[left_idxs], depth + 1, min_var, subset_features)
 
         self.right = DecisionTree(self.max_depth)
-        self.right.grow_tree(X[right_idxs], y[right_idxs], depth + 1)
-
-
+        self.right.grow_tree(X[right_idxs], y[right_idxs], depth + 1, min_var, subset_features)
 
     def _get_thresholds(self, feature_values):
         """
@@ -78,7 +82,7 @@ class DecisionTree:
         midpoints = (feature_values[1:] + feature_values[:-1]) / 2
         return midpoints
 
-    def _find_split(self, X, y, random_features):
+    def _find_split(self, X, y, features):
         """
         Find the best split for the data given features
         """
@@ -88,10 +92,10 @@ class DecisionTree:
 
         # initialize
         best_split = None
-        best_mse = float('inf')
+        best_mse = float('-inf')
 
         #loop through selected features and thresholds to find best split
-        for feature in random_features:
+        for feature in features:
             feature_values = X[:, feature]
             thresholds = self._get_thresholds(feature_values)
 
@@ -104,12 +108,26 @@ class DecisionTree:
                 # skip splits where either left or right partition is empty
                 if len(y_left) == 0 or len(y_right) == 0:
                     continue
-                # calculate mse of split 
-                mse = (np.var(y_left) * len(y_left) + np.var(y_right) * len(y_right)) / (len(y_left) + len(y_right))
+
+
+                #calcualte mse of children
+                n_parent = len(y)
+                n_left = len(y_left)
+                n_right = len(y_right)
+
+                var_parent = np.var(y)
+                var_left = np.var(y_left)
+                var_right = np.var(y_right)
+
+                weighted_left = (n_left / n_parent) * var_left 
+                weighted_right = (n_right / n_parent) * var_right
+
+                mse_decrease = var_parent - (weighted_left + weighted_right)
+
 
                 #update best mse and split
-                if mse < best_mse:
-                    best_mse = mse
+                if mse_decrease > best_mse:
+                    best_mse = mse_decrease
                     best_split = (feature, threshold)
         
         return best_split if best_split is not None else (None, None)
@@ -165,3 +183,42 @@ class RandomForest:
         """
         #just get the average prediction across all trees
         return np.mean([tree.predict(X) for tree in self.trees], axis=0)
+
+
+class RandomForestParallel:
+    def __init__(self, n_trees=100, max_depth=10, n_jobs=-1):
+        self.n_trees = n_trees
+        self.max_depth = max_depth
+        self.n_jobs = n_jobs if n_jobs != -1 else cpu_count()  # default to all cores if -1
+        self.trees = []
+        
+        print(f"RandomForestParallel initialized with {self.n_jobs} cores out of {cpu_count()} available.")
+        
+    def _fit_tree(self, X, y):
+        X_bootstrap, y_bootstrap = bootstrap_sample(X, y)
+        tree = DecisionTree(max_depth=self.max_depth)
+        tree.fit(X_bootstrap, y_bootstrap)
+        return tree
+    
+    def fit(self, X, y):
+        """
+        Fit a random forest to the data using parallel processing.
+        """
+        # fit each tree in parallel
+        self.trees = Parallel(n_jobs=self.n_jobs)(
+            delayed(self._fit_tree)(X, y) for _ in range(self.n_trees)
+        )
+    
+    def predict(self, X):
+        """
+        Predict the data using the fitted random forest in parallel.
+        """
+        # collect predictions from each tree in parallel
+        tree_preds = Parallel(n_jobs=self.n_jobs)(
+            delayed(tree.predict)(X) for tree in self.trees
+        )
+        
+        # avg prdeicitons across all trees
+        return np.mean(tree_preds, axis=0)
+    
+
