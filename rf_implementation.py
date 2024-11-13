@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from sklearn import datasets
 from sklearn.model_selection import train_test_split
-from randomforest import RandomForest, RandomForestParallel
+from randomforest import RandomForest, RandomForestParallel, PurelyRandomForest
 from sklearn.ensemble import RandomForestRegressor
 
 #test implementation of random forest code
@@ -30,7 +30,7 @@ def main():
 
     # fit sklearn model
 
-    sklearn_model = RandomForestRegressor(n_estimators=50, max_depth=10, n_jobs=-1)
+    sklearn_model = RandomForestRegressor(n_estimators=100, max_depth=1000, n_jobs=-1)
     sklearn_model.fit(X_train, y_train)
     y_pred_sklearn = sklearn_model.predict(X_test)
     rmse_sklearn = np.sqrt(np.mean((y_test - y_pred_sklearn) ** 2))
@@ -39,13 +39,23 @@ def main():
     print(f"NRMSE sklearn: {nrmse_sklearn}")
 
     # fit parallel rf model
-    parallel_model = RandomForestParallel(n_trees=100, max_depth=50)
-    parallel_model.fit(X_train, y_train)
-    y_pred_parallel = parallel_model.predict(X_test)
-    rmse_parallel = np.sqrt(np.mean((y_test - y_pred_parallel) ** 2))
-    print(f"RMSE parallel: {rmse_parallel}")
-    nrmse_parallel = rmse_parallel / (y_test.max() - y_test.min())
-    print(f"NRMSE parallel: {nrmse_parallel}")
+    # parallel_model = RandomForestParallel(n_trees=100, max_depth=50)
+    # parallel_model.fit(X_train, y_train)
+    # y_pred_parallel = parallel_model.predict(X_test)
+    # rmse_parallel = np.sqrt(np.mean((y_test - y_pred_parallel) ** 2))
+    # print(f"RMSE parallel: {rmse_parallel}")
+    # nrmse_parallel = rmse_parallel / (y_test.max() - y_test.min())
+    # print(f"NRMSE parallel: {nrmse_parallel}")
+
+    #fit purely random forest model
+    purely_random_model = PurelyRandomForest(n_trees=100, k=50)
+    purely_random_model.fit(X_train, y_train)
+    y_pred_purely_random = purely_random_model.predict(X_test)
+    rmse_purely_random = np.sqrt(np.mean((y_test - y_pred_purely_random) ** 2))
+    print(f"RMSE purely random: {rmse_purely_random}")
+    nrmse_purely_random = rmse_purely_random / (y_test.max() - y_test.min())
+    print(f"NRMSE purely random: {nrmse_purely_random}")
+
 
 
     # # plot results

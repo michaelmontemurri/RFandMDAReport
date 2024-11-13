@@ -222,3 +222,112 @@ class RandomForestParallel:
         return np.mean(tree_preds, axis=0)
     
 
+class PurelyRandomDecisionTree:
+    def __init__(self, k=10):
+        self.k = k #max depth for purely random
+        self.left = None
+        self.right = None
+        self.feature = None
+        self.threshold = None
+        self.value = None  # For storing leaf values
+    
+    def fit(self, X, y):
+        """
+        Fit a fully grown decision tree to the data
+        """
+        self.grow_tree(X, y)
+
+    def grow_tree(self, X, y, depth=0, min_var=1e-7):
+        
+        #stop if we reach max depth or if we have a pure node
+        if depth >= self.k or len(y) == 1:
+            self.value = np.mean(y)
+            return
+        
+        # choose feature uniformly at random
+        feature = np.random.choice(X.shape[1])
+ 
+        valid_rows = np.isfinite(X[:, feature])  # true for rows without NaN or inf
+        X_valid = X[valid_rows]
+        y_valid = y[valid_rows]
+        
+        if len(X_valid) == 0:  # if no valid rows, we can't split
+            self.value = np.nanmean(y_valid)  # store the mean as the leaf value
+            return
+        
+        # split on the center of the cell on the chosen feature
+        threshold = np.nanmean(X_valid[:, feature])
+        
+        # store split criteria for this node
+        self.feature = feature
+        self.threshold = threshold
+
+        # make the split and grow children recursively
+        left_idxs = X_valid[:, feature] < threshold
+        right_idxs = X_valid[:, feature] >= threshold
+
+        if np.sum(left_idxs) == 0 or np.sum(right_idxs) == 0:
+            self.value = np.mean(y_valid)  # Use the mean of valid data as the leaf value
+            return
+        
+        self.left = PurelyRandomDecisionTree(self.k)
+        self.left.grow_tree(X_valid[left_idxs], y_valid[left_idxs], depth + 1, min_var)
+
+        self.right = DecisionTree(self.k)
+        self.right.grow_tree(X_valid[right_idxs], y_valid[right_idxs], depth + 1, min_var)
+
+
+    def _predict_row(self, x):
+        """
+        Predict a single row of data
+        """
+        #cehck if leaf node
+        if self.value is not None:
+            return self.value
+        # otherwise, compare feature to threshold and recurse
+        if x[self.feature] < self.threshold:
+            return self.left._predict_row(x)
+        else:
+            return self.right._predict_row(x)
+        
+    def predict(self, X):
+        """
+        Predict the entire dataset
+        """
+        
+        return np.array([self._predict_row(x) for x in X])
+
+class PurelyRandomForest:
+    def __init__(self, n_trees=100, k=10, n_jobs=-1):
+        self.n_trees = n_trees
+        self.k = k
+        self.n_jobs = n_jobs if n_jobs != -1 else cpu_count()  # default to all cores if -1
+        self.trees = []
+        
+        print(f"RandomForestParallel initialized with {self.n_jobs} cores out of {cpu_count()} available.")
+            
+    def _fit_tree(self, X, y):
+        tree = PurelyRandomDecisionTree(k=self.k)
+        tree.fit(X, y)
+        return tree
+    
+    def fit(self, X, y):
+        """
+        Fit a random forest to the data using parallel processing.
+        """
+        # fit each tree in parallel
+        self.trees = Parallel(n_jobs=self.n_jobs)(
+            delayed(self._fit_tree)(X, y) for _ in range(self.n_trees)
+        )
+    
+    def predict(self, X):
+        """
+        Predict the data using the fitted random forest in parallel.
+        """
+        # collect predictions from each tree in parallel
+        tree_preds = Parallel(n_jobs=self.n_jobs)(
+            delayed(tree.predict)(X) for tree in self.trees
+        )
+        
+        # avg prdeicitons across all trees
+        return np.mean(tree_preds, axis=0)
