@@ -11,38 +11,46 @@ from sklearn.inspection import permutation_importance
 
 #lets write a function to do this
 
-def generate_data(n_samples, n_features, c, beta):
+def generate_data(n_samples, n_features, c, tau_0):
+    #generate the covariance matrix
     I = np.eye(n_features)
     ones = np.ones(n_features)
     C = (1-c)*I + c*np.outer(ones, ones)
+    #make tau a column vector of tau_0 of lengeth p
+    tau = [tau_0]*n_features
 
-    #check if C is positive definite
-    assert np.all(np.linalg.eigvals(C) > 0)
+    # We need to make matrxi with C in the top left, and tau^T in the bottom left and tau in top right
 
-    #generate X
-    mean = np.zeros(n_features)
-    X = np.random.multivariate_normal(mean, C, n_samples)
+    #create a 3x3 matrix with C in the top left, tau^T in the bottom left and tau in top right, and 1 in the bottom right
+    C = np.block([[C, np.array(tau).reshape(-1, 1)], [np.array(tau).reshape(1, -1), 1]])
+    print(C)
 
     #generate noise
-    eps = np.random.normal(0, 1, n_samples)
-    #get Y
-    Y = X @ beta + eps
+    eps = np.random.normal(0, 1)
+
+    #generate X
+    mean = np.zeros(n_features+1)
+    M = np.random.multivariate_normal(mean, C, n_samples)
+    X = M[:, :-1]
+    Y = M[:,-1] + eps
+
     return X, Y
 
 #MDA result from Gregorutti (2016)
-def mda_star_per_feature(X, Y, c, p):
-    tau_0s = [np.corrcoef(X[:, j], Y)[0, 1] for j in range(X.shape[1])]
-    print(tau_0s)
-    theoretical_mda = [2 * (tau_0 / (1 - c + p * c)) ** 2 for tau_0 in tau_0s]
+def mda_star(X, Y, tau_0, c, p):
+    print(tau_0)
+    theoretical_mda = 2 * (tau_0 / (1 - c + p * c)) ** 2 
+    print(theoretical_mda)
     return theoretical_mda
 
 #lets do a littel simulation to see if the result holds when we compare to the sklearn permutation importance
 
-n_samples = 10
-n_features = 5
-c = 0.5
-beta = np.random.normal(0, 1, n_features)
-X,Y = generate_data(n_samples, n_features, c, beta)
+n_samples = 1000
+n_features = 2
+c = 0.01
+tau_0 = 0.5
+X,Y = generate_data(n_samples, n_features, c, tau_0)
+print(X,Y)
 
 #use generated data to fit a random forest model
 rf = RandomForestRegressor(n_estimators=1000, max_depth=None, max_features='sqrt', n_jobs=-1, random_state=42)
@@ -54,7 +62,7 @@ importance = perm_importance.importances_mean
 #now we want to comapre the result from the MDA formula to the permutation importance
 
 #calculate MDA^*(X^(j)) for all j
-theoretical_mda = mda_star_per_feature(X, Y, c, n_features)
+theoretical_mda = mda_star(X, Y, tau_0, c, n_features)
 
-for j, (imp, mda) in enumerate(zip(importance, theoretical_mda)):
-    print(f"Feature {j+1}: permutation importance(MDA) = {imp:.4f}, theoretical MDA* = {mda:.4f}")
+print('theoretical mda', theoretical_mda)
+print('sklearn perm. importatnce', importance)
