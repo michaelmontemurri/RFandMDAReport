@@ -3,3 +3,5 @@
 randomforest.py contains relevant code
 
 rf_implementation.py just implements models and compares cusotm to off the shelf sklearn and parallel version
+
+see mda_simulation.py for most recent attempt 

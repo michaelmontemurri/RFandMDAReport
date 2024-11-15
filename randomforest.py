@@ -109,21 +109,8 @@ class DecisionTree:
                 if len(y_left) == 0 or len(y_right) == 0:
                     continue
 
-
-                #calcualte mse of children
-                n_parent = len(y)
-                n_left = len(y_left)
-                n_right = len(y_right)
-
-                var_parent = np.var(y)
-                var_left = np.var(y_left)
-                var_right = np.var(y_right)
-
-                weighted_left = (n_left / n_parent) * var_left 
-                weighted_right = (n_right / n_parent) * var_right
-
-                mse_decrease = var_parent - (weighted_left + weighted_right)
-
+                #calcualte mse decrease of split
+                mse_decrease = self._information_gain(y, y_left, y_right)
 
                 #update best mse and split
                 if mse_decrease > best_mse:
@@ -131,6 +118,22 @@ class DecisionTree:
                     best_split = (feature, threshold)
         
         return best_split if best_split is not None else (None, None)
+    
+
+    def _information_gain(self, y, y_left, y_right):
+        """
+        Calculate the information gain of a split
+        """
+        n = len(y)
+        n_left = len(y_left)
+        n_right = len(y_right)
+
+        mse_parent = np.var(y) * n
+        mse_left = np.var(y_left) * n_left
+        mse_right = np.var(y_right) * n_right
+
+        weighted_mse_children = (mse_left + mse_right) / n
+        return mse_parent - weighted_mse_children
     
     def _predict_row(self, x):
         """
@@ -149,7 +152,6 @@ class DecisionTree:
         """
         Predict the entire dataset
         """
-        
         return np.array([self._predict_row(x) for x in X])
     
   
@@ -183,7 +185,6 @@ class RandomForest:
         """
         #just get the average prediction across all trees
         return np.mean([tree.predict(X) for tree in self.trees], axis=0)
-
 
 class RandomForestParallel:
     def __init__(self, n_trees=100, max_depth=10, n_jobs=-1):
@@ -220,7 +221,6 @@ class RandomForestParallel:
         
         # avg prdeicitons across all trees
         return np.mean(tree_preds, axis=0)
-    
 
 class PurelyRandomDecisionTree:
     def __init__(self, k=10):
@@ -273,7 +273,7 @@ class PurelyRandomDecisionTree:
         self.left = PurelyRandomDecisionTree(self.k)
         self.left.grow_tree(X_valid[left_idxs], y_valid[left_idxs], depth + 1, min_var)
 
-        self.right = DecisionTree(self.k)
+        self.right = PurelyRandomDecisionTree(self.k)
         self.right.grow_tree(X_valid[right_idxs], y_valid[right_idxs], depth + 1, min_var)
 
 
@@ -331,3 +331,179 @@ class PurelyRandomForest:
         
         # avg prdeicitons across all trees
         return np.mean(tree_preds, axis=0)
+    
+class TotallyRandomDecisionTree:
+    def __init__(self):
+        self.children = {} #dictionary to store children based on modalities
+        self.value = None  # For storing leaf values
+        self.feature = None
+        self.mse_decrease = {}
+
+    def fit(self, X, y):
+        """
+        Fit a fully grown decision tree to the data
+        """
+        self.grow_tree(X, y, depth=0, available_features = list(range(X.shape[1])))
+
+    def grow_tree(self, X, y, depth=0, available_features = None):
+        # we need to store the impurity decrease associated with each split and its corresponding feature so that we can calculate feature importance later
+
+        #in this framework, if we are at depth p, we are at a leaf node
+        if len(available_features) == 0:
+            self.value = np.mean(y) 
+            return
+ 
+        #choose random feature to split on without replacement, i.e. once a feature is chosen, it cannot be chosen again in this tree.
+        self.feature = np.random.choice(available_features)
+        
+        #update remaining features, could be a faster way to do this but ok for now
+        new_features = [f for f in available_features if f != self.feature]
+
+        #get modalities of feature (number of unique values in the feature)
+        modalities = np.unique(X[:, self.feature])
+        
+        total_mse_decrease = 0
+        #split the data according to the modality
+        for mod in modalities:
+            #get indices of data where the feature is equal to the modality
+            idxs = X[:, self.feature] == mod
+            X_mod, y_mod = X[idxs], y[idxs]
+            
+            #if the modality is not present in the data, we need to skip the split
+            if len(y_mod) == 0:
+                continue
+
+            #measure information gain from split, in this case we have multipkle children per node, so we need to sum the impurity decrease over all children
+            mse_decrease = self._information_gain(y, y_mod, y[~idxs])
+            total_mse_decrease += mse_decrease
+
+            #store impurity decrease for this specific split and the correpsonding feature
+            if self.feature not in self.mse_decrease:
+                self.mse_decrease[self.feature] = 0
+            self.mse_decrease[self.feature] += mse_decrease
+
+            #create a child node and grow tree recursively
+            child = TotallyRandomDecisionTree()
+            child.grow_tree(X_mod, y_mod, depth + 1, new_features)
+            self.children[mod] = child
+
+        #now, calculate the average impurity decrease for each feature if feature importance is needed (to normalize again or already normazlized?)
+        #actually in this case, each feature gets split on only once per tree, so we can just take the average of the impurity decrease over all trees, so we dont need to normalize
+        #we can just sum the impurity decrease over all trees and then divide by the number of trees to get the average impurity decrease
+    
+    def _predict_row(self, x):
+            """
+            Predict a single row of data
+            """
+            #check if leaf node
+            if self.value is not None:
+                return self.value
+            
+            modality = x[self.feature]
+           
+            if modality in self.children:
+                return self.children[modality]._predict_row(x)
+            else:
+                return self.value
+
+    def predict(self, X):
+        """
+        Predict the entire dataset
+        """
+        return np.array([self._predict_row(x) for x in X])
+    
+    def _information_gain(self, y, y_left, y_right):
+        """
+        Calculate the information gain of a split
+        """
+        n = len(y)
+        n_left = len(y_left)
+        n_right = len(y_right)
+
+        mse_parent = np.var(y) * n
+        mse_left = np.var(y_left) * n_left
+        mse_right = np.var(y_right) * n_right
+
+        weighted_mse_children = (mse_left + mse_right) / n
+        return mse_parent - weighted_mse_children
+
+class TotallyRandomForest:
+    def __init__(self, n_trees=100):
+        self.n_trees = n_trees
+        self.trees = []
+
+    def fit(self, X, y):
+        """
+        Fit a random forest to the data.
+        """
+        for _ in range(self.n_trees):
+            # Create and fit each tree on the data
+            tree = TotallyRandomDecisionTree()
+            tree.fit(X, y)
+            self.trees.append(tree)
+
+    def predict(self, X):
+        """
+        Predict the data using the fitted random forest by averaging predictions from each tree.
+        """
+        # Collect predictions from each tree
+        # tree_preds = []
+        # for tree in self.trees:
+        #     pred = tree.predict(X)
+        #     if pred is not None:
+        #         tree_preds.append(pred)
+        #     else:
+        #         print('Warning: encountered NaN in prediction. Skipping tree.')
+        
+        # if not tree_preds:
+        #     raise ValueError('All trees produced NaN predictions. Cannot make ensemble prediction.')
+
+        # tree_preds = np.array(tree_preds)
+        # Average predictions across trees
+        return np.mean([tree.predict(X) for tree in self.trees], axis=0)
+    
+    # def fit(self, X, y):
+    #     """
+    #     Fit a random forest to the data using parallel processing.
+    #     """
+    #     # fit each tree in parallel
+    #     self.trees = Parallel(n_jobs=self.n_jobs)(
+    #         delayed(self._fit_tree)(X, y) for _ in range(self.n_trees)
+    #     )
+    
+    # def predict(self, X):
+    #     """
+    #     Predict the data using the fitted random forest in parallel.
+    #     """
+    #     # collect predictions from each tree in parallel
+    #     tree_preds = np.array([tree.predict(X) for tree in self.trees])
+
+    #     # 
+    #     if tree_preds.ndim == 2 and tree_preds.shape[1] == 1: 
+    #         return np.mean(tree_preds, axis=0)
+    
+    def feature_importances(self):
+        """
+        calculate feature importance
+        """
+
+        #initialize dictionary to store impurity decrease
+        total_mse_decrease = {}
+
+        #accumulate the mse_decrease with each corresponding feature over all trees
+        for tree in self.trees:
+            for feature, mse_decrease in tree.mse_decrease.items():
+                if feature not in total_mse_decrease:
+                    total_mse_decrease[feature] = 0
+                total_mse_decrease[feature] += mse_decrease
+        
+        #normalize by the total impurity decrease
+        total_decrease = sum(total_mse_decrease.values())
+
+        #avoid division by zero for pure nodes
+        if total_decrease == 0:
+            return {feature: 0 for feature in total_mse_decrease.keys()}
+        
+        feature_importances = {feature: mse_decrease / total_decrease for feature, mse_decrease in total_mse_decrease.items()}
+
+        return feature_importances
