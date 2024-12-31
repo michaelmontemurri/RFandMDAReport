@@ -1,7 +1,3 @@
-# Assignment 3 base random forest and variations implementation from scratch
+# Random Forest and Mean Decrease in Accuracy
 
-randomforest.py contains relevant code
-
-rf_implementation.py just implements models and compares cusotm to off the shelf sklearn and parallel version
-
-see mda_simulation.py for most recent attempt 
+This repo contains the report and notebook for our write up on Brieman's Random Forests and an Analysis/Critique of bounds on MDA developed by Gregorutti. 
